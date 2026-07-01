@@ -1,9 +1,19 @@
 """
-data_layer.py - load one-CSV-per-stock OHLCV files into aligned panels.
+data_layer.py - load NSE near-month futures (1-min bars) into a daily price panel.
 
-A "panel" = a table where rows are dates, columns are stock tickers.
-We build two: one for close prices, one for volume.
-Everything downstream (signals, backtest) expects this shape.
+Your raw files (derived_data/futures/TICKER_-I.csv) look like:
+    Ticker,Date,Time,Open,High,Low,Close,Volume,Open Interest
+    HDFCBANK-I.NFO,02/01/2023,09:15:59,1630.05,...
+
+This loader:
+  - reads only near-month (_-I.csv) files
+  - parses the dd/mm/yyyy dates
+  - compresses 1-minute bars down to ONE row per day (daily close = last
+    price of the day; daily volume = sum) - much lighter to work with
+  - builds a `close` panel: rows = dates, cols = tickers
+
+Daily is the clean starting point. We can switch to finer bars later without
+changing anything downstream.
 """
 
 import os
@@ -11,51 +21,61 @@ import glob
 import pandas as pd
 
 
-def load_one_stock(path: str) -> pd.DataFrame:
-    """
-    Read a single stock CSV. Expects columns like:
-    Date, Open, High, Low, Close, Volume   (case-insensitive)
-    Returns a DataFrame indexed by date.
-    """
-    df = pd.read_csv(path)
-    # normalise column names to lowercase so we don't care about Close vs close
-    df.columns = [c.strip().lower() for c in df.columns]
-    df["date"] = pd.to_datetime(df["date"])
-    df = df.set_index("date").sort_index()
-    return df
+def _clean_ticker(filename: str) -> str:
+    """'HDFCBANK_-I.csv' -> 'HDFCBANK'."""
+    base = os.path.basename(filename)
+    base = base.replace(".csv", "")
+    base = base.replace("_-I", "")   # strip the near-month suffix
+    return base
 
 
-def load_panels(folder: str):
+def load_daily_close(path: str) -> pd.Series:
     """
-    Read every CSV in `folder`. Ticker = filename without extension.
-    Returns (close_panel, volume_panel), both aligned on a shared date index.
+    Read one near-month futures CSV of 1-min bars, return a DAILY close series.
+    Daily close = the last traded price of each day.
     """
-    files = sorted(glob.glob(os.path.join(folder, "*.csv")))
+    df = pd.read_csv(path, usecols=["Date", "Time", "Close", "Volume"])
+    # dates are dd/mm/yyyy
+    df["date"] = pd.to_datetime(df["Date"], format="%d/%m/%Y")
+    # last close of each day = end-of-day price
+    daily = df.groupby("date")["Close"].last()
+    return daily
+
+
+def load_panel(folder: str, only_near_month: bool = True,
+               tickers: list | None = None) -> pd.DataFrame:
+    """
+    Build a daily close panel from all near-month futures files in `folder`.
+
+    tickers: optional whitelist (e.g. only the ones in your sectors.py). If
+             given, we only load those - much faster than loading all ~220.
+    Returns DataFrame: rows = dates, cols = tickers, values = daily close.
+    """
+    pattern = "*_-I.csv" if only_near_month else "*.csv"
+    files = sorted(glob.glob(os.path.join(folder, pattern)))
     if not files:
-        raise FileNotFoundError(f"No CSVs found in {folder}")
+        raise FileNotFoundError(f"No files matching {pattern} in {folder}")
 
-    closes, volumes = {}, {}
+    closes = {}
     for f in files:
-        ticker = os.path.splitext(os.path.basename(f))[0]
-        df = load_one_stock(f)
-        closes[ticker] = df["close"]
-        volumes[ticker] = df["volume"]
+        ticker = _clean_ticker(f)
+        if tickers is not None and ticker not in tickers:
+            continue
+        try:
+            closes[ticker] = load_daily_close(f)
+        except Exception as e:
+            print(f"  skipped {ticker}: {e}")
 
-    # pd.DataFrame on a dict of Series auto-aligns on the date index
-    close_panel = pd.DataFrame(closes).sort_index()
-    volume_panel = pd.DataFrame(volumes).sort_index()
-    return close_panel, volume_panel
+    panel = pd.DataFrame(closes).sort_index()
+    return panel
 
 
-def basic_health_check(close: pd.DataFrame) -> None:
-    """Print quick sanity facts - the Phase 0 data audit, in miniature."""
+def health_check(close: pd.DataFrame) -> None:
     print(f"  stocks      : {close.shape[1]}")
     print(f"  trading days: {close.shape[0]}")
     print(f"  date range  : {close.index.min().date()} -> {close.index.max().date()}")
-    missing = close.isna().sum().sum()
-    print(f"  missing vals: {missing}")
-    # a crude split detector: any single-day move bigger than 40%?
+    print(f"  missing vals: {close.isna().sum().sum()}")
     daily_ret = close.pct_change()
     cliffs = (daily_ret.abs() > 0.40).sum().sum()
-    flag = "  <-- check for unadjusted splits!" if cliffs else ""
+    flag = "  <-- likely stock splits (corporate actions) to handle later" if cliffs else ""
     print(f"  >40% 1-day moves: {cliffs}{flag}")
