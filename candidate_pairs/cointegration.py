@@ -5,6 +5,9 @@
 import statsmodels.api as sm
 from statsmodels.tsa.stattools import adfuller
 import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+
 
 
 #draw the best-fit line through the A-vs-B dots, and return its slope (β)
@@ -33,19 +36,35 @@ def adf_pvalue(spread_series):
     result = adfuller(spread_series.dropna())
     return result[1]   # index 1 is the p-value
 
+def half_life(spread_series):
+    clean = spread_series.dropna()
+    lag = clean.shift(1).dropna()             # yesterday's spread
+    delta = clean.diff().dropna()             # today's change
+    lag = lag.loc[delta.index]                # align both
+    theta = sm.OLS(delta, sm.add_constant(lag)).fit().params.iloc[1]
+    return -np.log(2) / theta
+
 if __name__ == "__main__":
     from data_layer import load_panel
     folder = "/Users/ashankawasthy/Desktop/quant_trading/derived_data/futures"
-    close = load_panel(folder, tickers=["AXISBANK", "SBIN"])
+    close = load_panel(folder, tickers=["COALINDIA", "ONGC"])
     print(close.columns.tolist())
 
 
     # Pass panda series of date, close to spread, and store a date, spread series in s
-    s = spread(close["AXISBANK"], close["SBIN"]) 
+    s = spread(close["COALINDIA"], close["ONGC"]) 
+    
     print(s.describe())        # summary stats of the spread
 
     print("ADF p-value:", adf_pvalue(s))
+    print("half-life:", half_life(s), "days")
 
-    s.plot(title="COALINDIA - beta*ONGC spread")
-    import matplotlib.pyplot as plt
-    plt.show()
+    # plot both stocks spread and raw close prices
+    fig, axes = plt.subplots(2, 1, figsize=(12, 8))
+
+    close[["COALINDIA", "ONGC"]].plot(ax=axes[0], title="COALINDIA vs ONGC - close prices")
+    s.plot(ax=axes[1], title="COALINDIA - beta*ONGC spread", color="orange")
+
+    plt.tight_layout()
+    plt.show()   # one show → both plots appear together, press Q to close
+
