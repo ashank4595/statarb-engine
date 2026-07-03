@@ -36,12 +36,12 @@ def adf_pvalue(spread_series):
 if __name__ == "__main__":
     from data_layer import load_panel
     folder = "/Users/ashankawasthy/Desktop/quant_trading/derived_data/futures"
-    close = load_panel(folder, tickers=["COALINDIA", "ONGC"])
+    close = load_panel(folder, tickers=["AXISBANK", "SBIN"])
     print(close.columns.tolist())
 
 
     # Pass panda series of date, close to spread, and store a date, spread series in s
-    s = spread(close["COALINDIA"], close["ONGC"]) 
+    s = spread(close["AXISBANK"], close["SBIN"]) 
     print(s.describe())        # summary stats of the spread
 
     print("ADF p-value:", adf_pvalue(s))
