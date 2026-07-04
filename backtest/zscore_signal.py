@@ -2,18 +2,18 @@
 # Turns a spread series into a z-score signal:
 # how many std-devs from the rolling mean is the spread right now?
 #
-# Execution example with mock numbers: docs/signal_execution_example.md
+# Execution example with mock numbers: docs/zscore_signal_execution_example.md
 
 import pandas as pd
 
 # z > +2  -> short the spread (too wide, bet it narrows)
 # z < -2  -> long the spread  (too narrow, bet it widens)
 # |z|<0.5 -> exit             (back to normal, take profit)
-# |z|>3.5 -> stop loss        (relationship may have broken permanently)
+# |z|>3.5 -> STOP_LOSS        (relationship may have broken permanently)
 
 ENTRY_THRESHOLD = 2.0    # open a trade when |z| crosses this
 EXIT_THRESHOLD  = 0.5    # close a trade when |z| falls below this
-STOP_THRESHOLD  = 3.5    # emergency exit if spread keeps running away
+STOP_LOSS  = 3.5    # emergency exit if spread keeps running away
 
 
 def zscore(spread_series: pd.Series, window: int = 60) -> pd.Series:
@@ -41,14 +41,13 @@ def zscore(spread_series: pd.Series, window: int = 60) -> pd.Series:
 def positions(zscore_series: pd.Series) -> pd.Series:
     """
     Convert daily z-scores into a position signal for each day.
-
     Iterates day by day (loop required because each day's position depends
-    on yesterday's position — you hold a trade until exit/stop fires).
+    on yesterday's position, you hold a trade until exit/STOP_LOSS fires).
 
     Position values:
         +1.0  long the spread  (z crossed below -ENTRY_THRESHOLD)
         -1.0  short the spread (z crossed above +ENTRY_THRESHOLD)
-         0.0  flat             (no position — exit or stop triggered)
+         0.0  flat             (no position — exit or STOP_LOSS_LOSS triggered)
 
     Args:
         zscore_series: daily z-scores from zscore(), indexed by date.
@@ -65,8 +64,8 @@ def positions(zscore_series: pd.Series) -> pd.Series:
         if pd.isna(z):
             pos.iloc[i] = 0.0                  # no signal yet (still in warm-up)
 
-        elif abs(z) > STOP_THRESHOLD:
-            pos.iloc[i] = 0.0                  # stop loss: spread ran too far
+        elif abs(z) > STOP_LOSS:
+            pos.iloc[i] = 0.0                  # STOP_LOSS loss: spread ran too far
 
         elif prev != 0 and abs(z) < EXIT_THRESHOLD:
             pos.iloc[i] = 0.0                  # exit: spread reverted to normal
@@ -84,6 +83,7 @@ def positions(zscore_series: pd.Series) -> pd.Series:
 
 
 if __name__ == "__main__":
+    # Test on ONGC data
     import sys, os
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from data_layer import load_panel
@@ -97,7 +97,7 @@ if __name__ == "__main__":
     z = zscore(s)
     p = positions(z)
 
-    fig, axes = plt.subplots(3, 1, figsize=(12, 10))
+    fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
 
     s.plot(ax=axes[0], title="Spread (COALINDIA - beta*ONGC)", color="blue")
 
@@ -110,6 +110,12 @@ if __name__ == "__main__":
 
     p.plot(ax=axes[2], title="Position  (+1=long spread, -1=short spread, 0=flat)", color="purple")
     axes[2].axhline(0, color="black", linestyle="-", alpha=0.3)
+    # inspect what happened around the double trade
+    window = p[(p.index >= "2025-01-01") & (p.index <= "2025-04-01")]
+    changes = window[window.diff() != 0]   # days the position changed
+    print(changes)
 
+    # and the z-scores on those days
+    print(z.loc[changes.index])
     plt.tight_layout()
     plt.show()
