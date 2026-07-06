@@ -8,12 +8,68 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 
-#draw the best-fit line through the A-vs-B dots, and return its slope (β)
-def hedge_ratio(price_a, price_b):
-    b_with_const = sm.add_constant(price_b)      # allow an intercept
-    # Find Ordinary line of Least Squares
-    model = sm.OLS(price_a, b_with_const).fit()  # fit A ≈ intercept + β·B
-    return model.params.iloc[1]                   # return slope β
+# TLS (Total Least Squares) hedge ratio via the first principal component.
+# Unlike OLS, this is symmetric: hedge_ratio(A, B) and hedge_ratio(B, A) give
+# the same relationship, because it minimizes perpendicular distance to the
+# line (not vertical), so the arbitrary choice of which stock is A disappears.
+# def hedge_ratio(price_a, price_b):
+#     combined = pd.concat([price_a, price_b], axis=1).dropna()
+#     a = combined.iloc[:, 0]
+#     b = combined.iloc[:, 1]
+
+#     # covariance matrix of the two price series
+#     cov = np.cov(a, b)
+
+#     # eigenvectors of the covariance matrix; the one with the largest
+#     # eigenvalue points along the "long axis" of the price cloud
+#     eigenvalues, eigenvectors = np.linalg.eig(cov)
+#     principal = eigenvectors[:, np.argmax(eigenvalues)]
+
+#     # slope of that principal axis = the symmetric hedge ratio
+#     return principal[1] / principal[0]
+
+def hedge_ratio(price_a: pd.Series, price_b: pd.Series) -> float:
+    """
+    TLS/PCA hedge ratio for:
+        spread = A - beta * B
+
+    Returns beta such that A ≈ beta * B.
+    """
+    combined = pd.concat([price_a, price_b], axis=1).dropna()
+
+    if len(combined) < 2:
+        return np.nan
+
+    a = combined.iloc[:, 0].to_numpy(dtype=float)
+    b = combined.iloc[:, 1].to_numpy(dtype=float)
+
+    cov = np.cov(a, b)
+
+    # eigh is specifically for real symmetric covariance matrices.
+    eigenvalues, eigenvectors = np.linalg.eigh(cov)
+
+    # Direction of greatest shared movement.
+    principal = eigenvectors[:, np.argmax(eigenvalues)]
+
+    # principal[0] = A-direction, principal[1] = B-direction.
+    # Since spread is A - beta*B, beta should be dA/dB.
+    if np.isclose(principal[1], 0):
+        return np.nan
+
+    return float(principal[0] / principal[1])
+
+# Old hedge ratio: finds regression line through OLS.
+# This minimizes distance of the line from price_a's plots
+# So pairs A, B would give different results compared to B,A
+# Used TLS to make this consistent
+
+# #draw the best-fit line through the A-vs-B plots, and return its slope (β)
+# def hedge_ratio(price_a, price_b):
+#     b_with_const = sm.add_constant(price_b)      # allow an intercept
+#     # Find Ordinary line of Least Squares
+#     model = sm.OLS(price_a, b_with_const).fit()  # fit A c≈ intercept + β·B
+
+#     return model.params.iloc[1]                   # return slope β
 
 # To find spread, if stock moves up for example, one is larger than the other 200 and 100
 # current difference is 100
