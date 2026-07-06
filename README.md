@@ -22,12 +22,4 @@ pip install -r requirements.txt
 python make_fake_data.py   # generates synthetic CSVs + runs the loader
 ```
 
-## Roadmap
-- [x] Step 1: repo + data loader
-- [ ] Step 2: backtest engine + look-ahead tripwire tests
-- [ ] Step 3: economic pair selection (same-sector)
-- [ ] Step 4: cointegration screen + half-life
-- [ ] Step 5: z-score signal
-- [ ] Step 6: formation/trading split (out-of-sample)
-- [ ] Step 7: full backtest with costs
-- [ ] Step 8: evaluation (market-neutrality check)
+
