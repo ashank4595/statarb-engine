@@ -21,7 +21,7 @@ def hedge_ratio(price_a, price_b):
 # A - B = 200 / incorrect spread
 # First normalize B, 200/100 = 2, so Let B = 200, both move up and becoome 
 # 400 and 400, 400 - 400 = 0 -> correct spread showing they didn't move apart more
-def spread(price_a : pd.series, price_b : pd.series) -> pd.series:
+def spread(price_a : pd.Series, price_b : pd.Series) -> pd.Series:
     """
     Calculates the hedge-ratio adjusted spread between two asset prices.
     Returns: pd.Series: The calculated spread (a - beta * b), 
@@ -34,6 +34,16 @@ def spread(price_a : pd.series, price_b : pd.series) -> pd.series:
     a = combined.iloc[:, 0]
     b = combined.iloc[:, 1]
     beta = hedge_ratio(a, b)   # passing clean series
+    return a - beta * b
+
+# Builds the spread using a PROVIDED beta instead of fitting a fresh one.
+# Needed for walk-forward: beta learned on the formation period is applied unchanged
+# to the trading period, so trading data never leaks into pair fitting.
+# Differs from spread() only in that it uses the beta passed in rather than refitting.
+def spread_with_beta(price_a: pd.Series, price_b: pd.Series, beta: float) -> pd.Series:
+    combined = pd.concat([price_a, price_b], axis=1).dropna()
+    a = combined.iloc[:, 0]
+    b = combined.iloc[:, 1]
     return a - beta * b
 
 def adf_pvalue(spread_series):
