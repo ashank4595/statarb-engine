@@ -21,7 +21,12 @@ def hedge_ratio(price_a, price_b):
 # A - B = 200 / incorrect spread
 # First normalize B, 200/100 = 2, so Let B = 200, both move up and becoome 
 # 400 and 400, 400 - 400 = 0 -> correct spread showing they didn't move apart more
-def spread(price_a, price_b):
+def spread(price_a : pd.series, price_b : pd.series) -> pd.series:
+    """
+    Calculates the hedge-ratio adjusted spread between two asset prices.
+    Returns: pd.Series: The calculated spread (a - beta * b), 
+    or an empty Series if there are fewer than 100 overlapping days.
+    """
     # align dates and handle Nan values, then pass clean data downstream
     combined = pd.concat([price_a, price_b], axis=1).dropna()
     if len(combined) < 100:      # not enough overlapping days → return empty

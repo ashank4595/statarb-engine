@@ -2,7 +2,6 @@
 # engine.py
 # Replays position signals through history to produce an honest P&L.
 # The one rule: a position decided at day t's close earns day t+1's return.
-# Execution example: docs/signal_execution_example.md (t+1 section)
 
 import pandas as pd
 
@@ -34,6 +33,7 @@ def backtest_pair(spread_series: pd.Series,
 
     gross_pnl = positions.shift(1) * spread_returns  # t+1 rule: yesterday's
                                                      # position earns today's move
+                                                     # explanation in docs
 
     trades = positions.diff().abs()                  # units traded on each change
     costs = trades * cost_per_unit                   # cost of those trades
@@ -47,6 +47,46 @@ def backtest_pair(spread_series: pd.Series,
     }).fillna(0.0)
 
     result["equity"] = result["net_pnl"].cumsum()    # running total = equity curve
+    return result
+
+# For better understanding, same results as backtest_pair
+def backtest_pair_loop(spread_series: pd.Series,
+                       positions: pd.Series,
+                       cost_per_unit: float = 0.05) -> pd.DataFrame:
+    """
+    Same as backtest_pair() but written as an explicit day-by-day loop
+    instead of vectorized.`yesterday_position = positions.iloc[i - 1]` IS the t+1 rule:
+    reach back one day for the position, pair it with today's price change.
+
+    Returns:
+        pd.DataFrame with gross_pnl, costs, net_pnl, equity (same as backtest_pair).
+    """
+    dates = spread_series.index
+    gross_pnl = []
+    costs = []
+
+    for i in range(len(dates)):
+        if i == 0:
+            # first day: no previous position, no previous price -> no P&L
+            gross_pnl.append(0.0)
+            costs.append(0.0)
+            continue
+
+        # position decided YESTERDAY earns the move from yesterday to today
+        yesterday_position = positions.iloc[i - 1]
+        spread_change = spread_series.iloc[i] - spread_series.iloc[i - 1]
+        gross_pnl.append(yesterday_position * spread_change)
+
+        # cost: did the position change from yesterday to today?
+        position_change = abs(positions.iloc[i] - positions.iloc[i - 1])
+        costs.append(position_change * cost_per_unit)
+
+    result = pd.DataFrame({
+        "gross_pnl": gross_pnl,
+        "costs": costs,
+    }, index=dates)
+    result["net_pnl"] = result["gross_pnl"] - result["costs"]
+    result["equity"] = result["net_pnl"].cumsum()
     return result
 
 
@@ -78,6 +118,13 @@ if __name__ == "__main__":
 
     result = backtest_pair(s, p)
 
+    # verify the loop version gives the identical total
+    result_loop = backtest_pair_loop(s, p)
+    print(f"vectorized total net P&L : {result['net_pnl'].sum():.2f}")
+    print(f"loop total net P&L       : {result_loop['net_pnl'].sum():.2f}")
+    print(f"match: {np.isclose(result['net_pnl'].sum(), result_loop['net_pnl'].sum())}")
+
+    print()
     print(result.tail())
     print(f"\ntotal gross P&L : {result['gross_pnl'].sum():.2f}")
     print(f"total costs     : {result['costs'].sum():.2f}")
