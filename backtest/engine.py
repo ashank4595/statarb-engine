@@ -31,8 +31,8 @@ def backtest_pair(spread_series: pd.Series,
     """
     spread_returns = spread_series.diff()            # daily change in spread
 
-    gross_pnl = positions.shift(1) * spread_returns  # t+1 rule: yesterday's position earns today's move
-                                                     # explanation in docs/
+    gross_pnl = positions.shift(1) * spread_returns  # t+1 rule: yesterday's
+                                                     # position earns today's move
 
     trades = positions.diff().abs()                  # units traded on each change
     costs = trades * cost_per_unit                   # cost of those trades
@@ -48,14 +48,23 @@ def backtest_pair(spread_series: pd.Series,
     result["equity"] = result["net_pnl"].cumsum()    # running total = equity curve
     return result
 
-# For better understanding, same results as backtest_pair
+
 def backtest_pair_loop(spread_series: pd.Series,
                        positions: pd.Series,
                        cost_per_unit: float = 0.05) -> pd.DataFrame:
     """
     Same as backtest_pair() but written as an explicit day-by-day loop
-    instead of vectorized.`yesterday_position = positions.iloc[i - 1]` IS the t+1 rule:
+    instead of vectorized. Produces identical results — used to prove
+    that "hold position, earn daily change" equals tracking trades.
+
+    The line `yesterday_position = positions.iloc[i - 1]` IS the t+1 rule:
     reach back one day for the position, pair it with today's price change.
+    That is exactly what positions.shift(1) does in the vectorized version.
+
+    Args:
+        spread_series: daily spread values (A - beta*B).
+        positions:     daily position signal (+1/-1/0).
+        cost_per_unit: cost of trading 1 unit of the spread.
 
     Returns:
         pd.DataFrame with gross_pnl, costs, net_pnl, equity (same as backtest_pair).
@@ -92,11 +101,11 @@ def backtest_pair_loop(spread_series: pd.Series,
 if __name__ == "__main__":
     import sys, os
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from data_layer import load_panel
+    from data_layer import load_panel, load_daily_close
     from candidate_pairs.cointegration import spread
     from backtest.zscore_signal import zscore, positions
+    from backtest.evaluate import summary
     import matplotlib.pyplot as plt
-    import numpy as np
 
     # --- pick the pair to backtest (swap these two lines to test another pair) ---
     # top passing pairs from pair_screen_results.csv:
@@ -117,36 +126,16 @@ if __name__ == "__main__":
 
     result = backtest_pair(s, p)
 
-    # verify the loop version gives the identical total
-    result_loop = backtest_pair_loop(s, p)
-    print(f"vectorized total net P&L : {result['net_pnl'].sum():.2f}")
-    print(f"loop total net P&L       : {result_loop['net_pnl'].sum():.2f}")
-    print(f"match: {np.isclose(result['net_pnl'].sum(), result_loop['net_pnl'].sum())}")
+    # margin capital: ~20% of combined notional of both legs
+    notional = close[STOCK_A].mean() * 2
+    margin = notional * 0.20
 
-    print()
-    print(result.tail())
-    print(f"\ntotal gross P&L : {result['gross_pnl'].sum():.2f}")
-    print(f"total costs     : {result['costs'].sum():.2f}")
-    print(f"total net P&L   : {result['net_pnl'].sum():.2f}")
+    # load Nifty index to check market-neutrality (beta should be ~0)
+    nifty = load_daily_close(os.path.join(folder, "NIFTY_-I.csv"))
+    nifty_returns = nifty.pct_change()
 
-    # --- convert to percent returns on margin capital ---
-    # 1 unit of spread = long 1 STOCK_A + short beta STOCK_B
-    # approximate margin to hold both legs (~20% of combined notional)
-    notional = close[STOCK_A].mean() * 2               # rough: both legs similar size
-    margin = notional * 0.20                           # ~20% margin requirement
-
-    daily_ret = result["net_pnl"] / margin             # daily % return on capital
-
-    years = len(daily_ret) / 252                       # trading days -> years
-    total_return = result["equity"].iloc[-1] / margin
-    annual_return = (1 + total_return) ** (1 / years) - 1
-
-    sharpe = daily_ret.mean() / daily_ret.std() * np.sqrt(252)
-
-    print(f"\nmargin capital assumed : {margin:.0f}")
-    print(f"total return           : {total_return * 100:.1f}%")
-    print(f"annualized return      : {annual_return * 100:.1f}%")
-    print(f"annualized Sharpe      : {sharpe:.2f}")
+    print(f"=== {STOCK_A}-{STOCK_B} pairs strategy ===")
+    summary(result, margin, index_returns=nifty_returns)
 
     result["equity"].plot(title=f"{STOCK_A}-{STOCK_B} pairs strategy: equity curve",
                           figsize=(12, 5))
