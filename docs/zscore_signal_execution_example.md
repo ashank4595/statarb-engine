@@ -9,7 +9,7 @@ EXECUTION EXAMPLE (made-up numbers to trace the flow):
    2023-01-03   402.00       201.00
    2023-01-04   398.00       203.00
 
-2. spread(close["COALINDIA"], close["ONGC"]) 
+2. spread(close["COALINDIA"], close["ONGC"])
       computes A - beta*B, compressing raw spread (A -B)
    Say beta = 1.8 (from regression). Then returns:
 
@@ -23,7 +23,7 @@ EXECUTION EXAMPLE (made-up numbers to trace the flow):
    mean = (40.00 + 40.20 + (-7.40)) / 3 = 24.27
    std  = std([40.00, 40.20, -7.40])     = 27.12
    z = (x - μ) / σ
-     = (-7.40 - 24.27) / 27.12        = -1.17 
+     = (-7.40 - 24.27) / 27.12        = -1.17
 
    date         zscore
    2023-01-02   NaN      <- not enough history yet
@@ -43,4 +43,5 @@ EXECUTION EXAMPLE (made-up numbers to trace the flow):
 
    If on day 6 |z| fell back to 0.3 (< EXIT_THRESHOLD of 0.5):
    position = 0.0         <- exit, spread reverted to normal, take profit
+
 ```

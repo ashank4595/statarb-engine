@@ -31,9 +31,8 @@ def backtest_pair(spread_series: pd.Series,
     """
     spread_returns = spread_series.diff()            # daily change in spread
 
-    gross_pnl = positions.shift(1) * spread_returns  # t+1 rule: yesterday's
-                                                     # position earns today's move
-                                                     # explanation in docs
+    gross_pnl = positions.shift(1) * spread_returns  # t+1 rule: yesterday's position earns today's move
+                                                     # explanation in docs/
 
     trades = positions.diff().abs()                  # units traded on each change
     costs = trades * cost_per_unit                   # cost of those trades
