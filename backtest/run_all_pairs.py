@@ -1,9 +1,11 @@
 # run_all_pairs.py
 # Tests every pair from create_pairs.all_pairs() and reports how many are
-# profitable. MODE selects the validation method:
-#   "full"    - fit and trade on all data (in-sample, optimistic) 
-#   "split"   - fit on formation period, trade the later period once, using walk_forward.py
-#   "rolling" - re-fit every STEP_MONTHS and trade forward, using walk_forward_rolling.py
+# profitable. MODE selects the validation method (logic lives in validation_methods.py):
+#   "full"    - fit and trade on all data (in-sample, optimistic)
+#   "split"   - fit on formation period, trade the later period once
+#   "rolling" - re-fit every STEP_MONTHS and trade forward
+# Also persists each tradeable pair's daily net_pnl to results/daily_pnl_{MODE}.csv
+# so portfolio.py and report.py can combine / analyze them later.
 # Run: python3 -m backtest.run_all_pairs
 
 import sys, os
@@ -13,82 +15,13 @@ import pandas as pd
 
 from data_layer import load_panel
 from candidate_pairs.create_pairs import all_pairs
-from candidate_pairs.cointegration import hedge_ratio, spread, spread_with_beta, adf_pvalue
-from backtest.zscore_signal import zscore, positions
-from backtest.engine import backtest_pair
-from backtest.evaluate import sharpe
+from backtest.validation_methods import run_full, run_split, run_rolling
 
 FOLDER = "/Users/ashankawasthy/Desktop/quant_trading/derived_data/futures"
 
-# --- choose the validation method ---
-MODE = "split"                 # "full" | "split" | "rolling"
-SPLIT_DATE = "2025-01-01"      # boundary for "split" mode
-FORMATION_MONTHS = 24          # formation length for "rolling" mode
-STEP_MONTHS = 3                # trade-forward step for "rolling" mode
-COINT_THRESHOLD = 0.05
+MODE = "split"   # "full" | "split" | "rolling"
 
-
-def test_full(close, a, b):
-    """Fit and trade on all data (in-sample)."""
-    s = spread(close[a], close[b])
-    if len(s) < 100 or adf_pvalue(s) >= COINT_THRESHOLD:
-        return None
-    res = backtest_pair(s, positions(zscore(s)))
-    margin = close[a].mean() * 2 * 0.20
-    return sharpe(res["net_pnl"] / margin), res["net_pnl"].sum()
-
-
-def test_split(close, a, b):
-    """Fit on formation, trade the later period once."""
-    formation = close[close.index < SPLIT_DATE]
-    trading = close[close.index >= SPLIT_DATE]
-
-    form_spread = spread(formation[a], formation[b])
-    if len(form_spread) < 100 or adf_pvalue(form_spread) >= COINT_THRESHOLD:
-        return None
-
-    beta = hedge_ratio(formation[a].dropna(), formation[b].dropna())
-    trade_spread = spread_with_beta(trading[a], trading[b], beta)
-    if len(trade_spread) < 65:
-        return None
-    res = backtest_pair(trade_spread, positions(zscore(trade_spread)))
-    margin = trading[a].mean() * 2 * 0.20
-    return sharpe(res["net_pnl"] / margin), res["net_pnl"].sum()
-
-
-def test_rolling(close, a, b):
-    """Re-fit every STEP_MONTHS and trade forward, stitching the P&L."""
-    pair = close[[a, b]].dropna()
-    if pair.empty:
-        return None
-    start, end = pair.index.min(), pair.index.max()
-    split = start + pd.DateOffset(months=FORMATION_MONTHS)
-
-    window_results = []
-    while split < end:
-        trade_end = split + pd.DateOffset(months=STEP_MONTHS)
-        formation = pair[pair.index < split]
-        trading = pair[(pair.index >= split) & (pair.index < trade_end)]
-        split = trade_end
-
-        if len(formation) < 100 or len(trading) < 5:
-            continue
-        form_spread = spread(formation[a], formation[b])
-        if len(form_spread) < 100 or adf_pvalue(form_spread) >= COINT_THRESHOLD:
-            continue
-        beta = hedge_ratio(formation[a].dropna(), formation[b].dropna())
-        trade_spread = spread_with_beta(trading[a], trading[b], beta)
-        z = zscore(trade_spread, window=min(60, len(trade_spread) - 1))
-        window_results.append(backtest_pair(trade_spread, positions(z)))
-
-    if not window_results:
-        return None
-    stitched = pd.concat(window_results)
-    margin = pair[a].mean() * 2 * 0.20
-    return sharpe(stitched["net_pnl"] / margin), stitched["net_pnl"].sum()
-
-
-TESTERS = {"full": test_full, "split": test_split, "rolling": test_rolling}
+TESTERS = {"full": run_full, "split": run_split, "rolling": run_rolling}
 
 
 if __name__ == "__main__":
@@ -100,18 +33,25 @@ if __name__ == "__main__":
 
     print(f"testing {len(pairs)} candidate pairs...\n")
     rows = []
+    daily_pnl = {}   # pair_name -> daily net_pnl Series (recovered from equity.diff())
+
     for sector, a, b in pairs:
         if a not in close.columns or b not in close.columns:
             continue
         out = tester(close, a, b)
         if out is None:
             continue
-        sh, pnl = out
+        sh, pnl, equity, margin = out
         rows.append({
             "stock_a": a, "stock_b": b,
             "sharpe": round(sh, 2), "net_pnl": round(pnl, 1),
             "profitable": sh > 0,
+            "margin": round(margin, 1),
         })
+        # equity is cumsum(net_pnl), so diff() recovers the daily series exactly
+        daily = equity.diff()
+        daily.iloc[0] = equity.iloc[0]
+        daily_pnl[f"{a}-{b}"] = daily
 
     results = pd.DataFrame(rows).sort_values("sharpe", ascending=False).reset_index(drop=True)
 
@@ -128,6 +68,15 @@ if __name__ == "__main__":
     if len(profitable) > 0:
         print(f"\nmean Sharpe of profitable pairs: {profitable['sharpe'].mean():.2f}")
 
-    out = os.path.join(os.path.dirname(os.path.dirname(__file__)), f"results_{MODE}.csv")
-    results.to_csv(out, index=False)
-    print(f"\nsaved to results_{MODE}.csv")
+    root = os.path.dirname(os.path.dirname(__file__))
+    results.to_csv(os.path.join(root, f"results_{MODE}.csv"), index=False)
+    print(f"\nsaved summary to results_{MODE}.csv")
+
+    # wide DataFrame: index=date, one column per pair. Pairs can have different
+    # tradeable date ranges (esp. rolling mode) -> outer-join on union of dates,
+    # fill gaps with 0 (no position = no P&L that day, not "unknown").
+    daily_pnl_df = pd.concat(daily_pnl, axis=1).fillna(0.0).sort_index()
+    daily_dir = os.path.join(root, "results")
+    os.makedirs(daily_dir, exist_ok=True)
+    daily_pnl_df.to_csv(os.path.join(daily_dir, f"daily_pnl_{MODE}.csv"))
+    print(f"saved daily P&L per pair to results/daily_pnl_{MODE}.csv")

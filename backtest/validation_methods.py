@@ -35,9 +35,11 @@ COINT_THRESHOLD = 0.05         # a pair must pass ADF below this to be traded
 
 
 def _metrics(result: pd.DataFrame, ref_price: pd.Series):
-    """Sharpe + net P&L + equity from a backtest result, given a price for margin."""
+    """Sharpe + net P&L + equity + margin from a backtest result, given a price for margin.
+    margin is returned (not just used internally) so callers can size a multi-pair
+    portfolio's total capital -- e.g. to compute % returns for a combined book."""
     margin = ref_price.mean() * 2 * 0.20
-    return sharpe(result["net_pnl"] / margin), result["net_pnl"].sum(), result["equity"]
+    return sharpe(result["net_pnl"] / margin), result["net_pnl"].sum(), result["equity"], margin
 
 
 def run_full(close: pd.DataFrame, a: str, b: str):
@@ -113,8 +115,8 @@ if __name__ == "__main__":
         if out is None:
             ax.set_title(f"{name}: not tradeable")
             continue
-        sh, pnl, equity = out
-        print(f"{name:8s}  sharpe={sh:.2f}  net_pnl={pnl:.1f}")
+        sh, pnl, equity, margin = out
+        print(f"{name:8s}  sharpe={sh:.2f}  net_pnl={pnl:.1f}  margin={margin:.1f}")
         equity.plot(ax=ax, title=f"{name}  (Sharpe {sh:.2f})")
         ax.axhline(0, color="black", alpha=0.3)
 
