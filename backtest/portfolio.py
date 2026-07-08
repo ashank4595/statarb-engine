@@ -16,8 +16,7 @@
 import os
 import pandas as pd
 
-MODE = "split"                # must match a saved daily_pnl_{MODE}.csv
-WEIGHT_SCHEME = "equal_risk"  # "equal_weight" | "equal_risk"
+from backtest.config import MODE, WEIGHT_SCHEME   # single source of truth -- see config.py
 
 
 def combine(daily_pnl: pd.DataFrame, margins: pd.Series, scheme: str = "equal_risk"):

@@ -16,10 +16,9 @@ import pandas as pd
 from data_layer import load_panel
 from candidate_pairs.create_pairs import all_pairs
 from backtest.validation_methods import run_full, run_split, run_rolling
+from backtest.config import MODE   # single source of truth -- see config.py
 
 FOLDER = "/Users/ashankawasthy/Desktop/quant_trading/derived_data/futures"
-
-MODE = "split"   # "full" | "split" | "rolling"
 
 TESTERS = {"full": run_full, "split": run_split, "rolling": run_rolling}
 

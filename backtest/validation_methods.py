@@ -27,6 +27,7 @@ from candidate_pairs.cointegration import hedge_ratio, spread, spread_with_beta,
 from backtest.zscore_signal import zscore, positions
 from backtest.engine import backtest_pair
 from backtest.evaluate import sharpe
+from backtest.config import COST_PER_UNIT   # single source of truth -- see config.py
 
 SPLIT_DATE = "2025-01-01"      # formation/trading boundary for run_split
 FORMATION_MONTHS = 24          # formation length for run_rolling
@@ -46,7 +47,7 @@ def run_full(close: pd.DataFrame, a: str, b: str):
     s = spread(close[a], close[b])
     if len(s) < 100 or adf_pvalue(s) >= COINT_THRESHOLD:
         return None
-    result = backtest_pair(s, positions(zscore(s)))
+    result = backtest_pair(s, positions(zscore(s)), cost_per_unit=COST_PER_UNIT)
     return _metrics(result, close[a])
 
 
@@ -62,7 +63,7 @@ def run_split(close: pd.DataFrame, a: str, b: str):
     trade_spread = spread_with_beta(trading[a], trading[b], beta)
     if len(trade_spread) < 65:
         return None
-    result = backtest_pair(trade_spread, positions(zscore(trade_spread)))
+    result = backtest_pair(trade_spread, positions(zscore(trade_spread)), cost_per_unit=COST_PER_UNIT)
     return _metrics(result, trading[a])
 
 
@@ -86,9 +87,21 @@ def run_rolling(close: pd.DataFrame, a: str, b: str):
         if len(form_spread) < 100 or adf_pvalue(form_spread) >= COINT_THRESHOLD:
             continue
         beta = hedge_ratio(formation[a].dropna(), formation[b].dropna())
-        trade_spread = spread_with_beta(trading[a], trading[b], beta)
-        z = zscore(trade_spread, window=min(60, len(trade_spread) - 1))
-        window_results.append(backtest_pair(trade_spread, positions(z)))
+
+        # Build the spread over formation+trading together (same frozen beta) so
+        # the rolling z-score window arrives at day 1 of trading already calibrated
+        # from formation history, instead of re-warming from scratch every
+        # STEP_MONTHS. With STEP_MONTHS=3 (~63 trading days) and a 60-day z-score
+        # window, computing z-score fresh on trade_spread alone left only ~3
+        # tradeable days per quarter -- the rest was NaN warm-up, discarded at
+        # every window boundary.
+        combined = pair[pair.index < trade_end]
+        combined_spread = spread_with_beta(combined[a], combined[b], beta)
+        z_combined = zscore(combined_spread, window=min(60, len(form_spread) - 1))
+
+        trade_spread = combined_spread[combined_spread.index >= split]
+        z = z_combined[z_combined.index >= split]
+        window_results.append(backtest_pair(trade_spread, positions(z), cost_per_unit=COST_PER_UNIT))
 
     if not window_results:
         return None

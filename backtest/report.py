@@ -14,10 +14,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
-from backtest.evaluate import max_drawdown, annualized_return
-
-MODE = "split"
-WEIGHT_SCHEME = "equal_risk"
+from backtest.evaluate import max_drawdown, annualized_return, sharpe
+from backtest.config import MODE, WEIGHT_SCHEME   # single source of truth -- see config.py
 
 
 def monthly_matrix(pnl: pd.Series) -> pd.DataFrame:
@@ -50,12 +48,14 @@ def summary_stats(equity: pd.Series, daily_pnl: pd.Series, total_capital: float)
     ann_ret_pct = annualized_return(equity, total_capital) * 100
     ann_ret_rupees = total_pnl / years
     calmar = (total_pnl / years) / abs(max_dd) if max_dd != 0 else float("nan")
+    sh = sharpe(daily_pnl / total_capital)   # same fraction-of-capital convention as every per-pair Sharpe
     win_days = int((daily_pnl > 0).sum())
     total_days = int((daily_pnl != 0).sum())
     return {
         "Annual Return": f"{ann_ret_rupees:,.0f}  ({ann_ret_pct:.2f}%)",
         "Total P&L": f"{total_pnl:,.0f}",
         "Max Drawdown": f"{max_dd:,.0f}",
+        "Sharpe Ratio": f"{sh:.2f}",
         "Calmar Ratio": f"{calmar:.2f}",
         "Win / Total Days": f"{win_days} / {total_days} ({100*win_days/total_days:.1f}%)" if total_days else "n/a",
     }
