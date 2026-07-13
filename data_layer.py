@@ -23,10 +23,12 @@ import pandas as pd
 MONTH_SUFFIX = "_-I"
 
 def _clean_ticker(filename: str) -> str: # _ marks private helper
-    """'HDFCBANK_-I.csv' -> 'HDFCBANK'"""
+    """'HDFCBANK_-I.csv' -> 'HDFCBANK'.  'HDFCBANK.csv' -> 'HDFCBANK'.
+    The near-month suffix is stripped if present, but is not required -- any
+    filename works, the ticker is just the basename."""
     base = os.path.basename(filename) #.../futures/HDFCBANK_-I.csv -> HDFCBANK_-I.csv
     base = base.replace(".csv", "")
-    base = base.replace(MONTH_SUFFIX, "")   # strip the near-month suffix
+    base = base.replace(MONTH_SUFFIX, "")   # strip the near-month suffix if there is one
     return base 
 
 
@@ -104,8 +106,15 @@ def load_panel(folder: str, only_near_month: bool = True,
     # glob.glob searches the disk, returns a list of file paths that match
     # ['/Users...futures/360ONE_-I.csv',
     #'/Users...futures/AARTIIND_-I.csv...]
+
+    # fall back to ALL csvs if the near-month naming convention is not being used.
+    # ticker = filename, so any naming scheme works -- the _-I suffix is an NSE
+    # convention, not a requirement.
+    if not files and only_near_month:
+        files = sorted(glob.glob(os.path.join(folder, "*.csv")))
+
     if not files:
-        raise FileNotFoundError(f"No files matching {pattern} in {folder}")
+        raise FileNotFoundError(f"No .csv files in {folder}")
 
     closes = {}
     for f in files:
