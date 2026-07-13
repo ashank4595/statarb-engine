@@ -20,7 +20,7 @@ MODE = "rolling"
 # NOTE: results are written to results_{MODE}.csv / daily_pnl_{MODE}.csv, so two
 # rolling variants OVERWRITE each other. To compare 24mo vs 12mo, copy the outputs
 # aside between runs.
-FORMATION_MONTHS = 24
+FORMATION_MONTHS = 12
 STEP_MONTHS = 3
 
 # "equal_weight" - every pair gets the same nominal position size, ignoring volatility.

@@ -23,7 +23,17 @@ def combine(daily_pnl: pd.DataFrame, margins: pd.Series, scheme: str = "equal_ri
     if scheme == "equal_weight":
         weights = pd.Series(1.0, index=daily_pnl.columns)
     elif scheme == "equal_risk":
-        vol = daily_pnl.std().replace(0, pd.NA).dropna()
+        # Vol must be measured on the days the pair was ACTUALLY DEPLOYED.
+        #
+        # run_all_pairs pads every gated-out day with 0.0. In rolling mode a pair
+        # is typically live only ~8% of days, so .std() over the padded series
+        # measures risk-when-flat, not risk-when-trading. The padding shrinks the
+        # measured vol by roughly sqrt(fraction active) -- a pair live 4% of the
+        # time looks ~5x safer than it is, and 1/vol then levers it up ~5x too far.
+        #
+        # Masking the zeros measures the risk you actually carry while in the trade,
+        # which is what equal-risk weighting is supposed to equalize.
+        vol = daily_pnl[daily_pnl != 0].std().replace(0, pd.NA).dropna()
         weights = 1.0 / vol
         weights = weights / weights.sum() * len(weights)   # avg weight = 1
     else:

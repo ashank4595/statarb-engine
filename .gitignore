@@ -10,3 +10,6 @@ venv/
 .env
 .DS_Store
 src/
+
+# local-only verification + diagnostic scripts
+verification_scripts/

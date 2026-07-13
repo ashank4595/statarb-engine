@@ -19,15 +19,27 @@
 #       run_rolling(..., formation_months=12, step_months=3). Defaults come from
 #       config.FORMATION_MONTHS / config.STEP_MONTHS.
 #
-# Each returns (sharpe, net_pnl, equity_series) or None if the pair is not
-# tradeable (not enough data, or not cointegrated in the fitting period).
+# Every mode applies the SAME two-stage gate, fitted on formation data only:
+#   1. pair_is_valid  - correlation floor + positive beta. Runs FIRST, because
+#                       hedge_ratio() fits a beta to uncorrelated noise without
+#                       complaint, and adf_pvalue() then scores the resulting
+#                       nonsense spread without complaint either.
+#   2. adf_pvalue     - is that spread actually mean-reverting?
+# create_pairs.all_pairs() does no screening at all -- it just enumerates
+# within-sector combinations -- so this is the only place pairs get filtered.
+#
+# Each returns (sharpe, net_pnl, equity_series, margin) or None if the pair is not
+# tradeable (not enough data, failed the gate, or not cointegrated in the fit window).
 
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import numpy as np
 import pandas as pd
 
-from candidate_pairs.cointegration import hedge_ratio, spread, spread_with_beta, adf_pvalue
+from candidate_pairs.cointegration import (
+    hedge_ratio, spread_with_beta, adf_pvalue, pair_is_valid, COINT_THRESHOLD,
+)
 from backtest.zscore_signal import zscore, positions
 from backtest.engine import backtest_pair
 from backtest.evaluate import sharpe
@@ -36,40 +48,83 @@ from backtest.evaluate import sharpe
 from backtest.config import COST_PER_UNIT, FORMATION_MONTHS, STEP_MONTHS
 
 SPLIT_DATE = "2025-01-01"      # formation/trading boundary for run_split
-COINT_THRESHOLD = 0.05         # a pair must pass ADF below this to be traded
 ZSCORE_WINDOW = 60             # rolling lookback for the z-score, in trading days
+MIN_FORMATION_DAYS = 100       # too few days and the fit is not worth trusting
+MIN_TRADING_DAYS = 65          # roughly one quarter
 
 
-def _metrics(result: pd.DataFrame, ref_price: pd.Series):
-    """Sharpe + net P&L + equity + margin from a backtest result, given a price for margin.
+def _fit(formation: pd.DataFrame, a: str, b: str):
+    """Fit and gate a pair on ONE window. Shared by all three modes so the
+    tradeability rules cannot drift apart between them.
+
+    @return (beta, form_spread) if the pair passes, else (None, None).
+    """
+    if len(formation) < MIN_FORMATION_DAYS:
+        return None, None
+
+    beta = hedge_ratio(formation[a], formation[b])
+
+    # gate BEFORE the ADF test -- a beta fitted to noise produces a spread that
+    # ADF will still score, sometimes favourably.
+    ok, _reason = pair_is_valid(formation[a], formation[b], beta)
+    if not ok:
+        return None, None
+
+    form_spread = spread_with_beta(formation[a], formation[b], beta)
+    if len(form_spread) < MIN_FORMATION_DAYS:
+        return None, None
+    if adf_pvalue(form_spread) >= COINT_THRESHOLD:
+        return None, None
+
+    return beta, form_spread
+
+
+def _metrics(result: pd.DataFrame, price_a: pd.Series, price_b: pd.Series, beta: float):
+    """Sharpe + net P&L + equity + margin from a backtest result.
+
+    margin is the capital actually tied up. The position is 1 unit of A against
+    beta units of B, so the combined notional is mean(A) + beta*mean(B) -- NOT
+    2*mean(A), which silently assumed the two legs were the same size. Futures
+    margin is ~20% of notional.
+
     margin is returned (not just used internally) so callers can size a multi-pair
-    portfolio's total capital -- e.g. to compute % returns for a combined book."""
-    margin = ref_price.mean() * 2 * 0.20
+    portfolio's total capital -- e.g. to compute % returns for a combined book.
+    """
+    notional = price_a.mean() + abs(beta) * price_b.mean()
+    margin = notional * 0.20
     return sharpe(result["net_pnl"] / margin), result["net_pnl"].sum(), result["equity"], margin
 
 
 def run_full(close: pd.DataFrame, a: str, b: str):
-    s = spread(close[a], close[b])
-    if len(s) < 100 or adf_pvalue(s) >= COINT_THRESHOLD:
+    """In-sample baseline. Fits and trades on the same data -- diagnostic only."""
+    pair = close[[a, b]].dropna()
+    beta, _ = _fit(pair, a, b)
+    if beta is None:
         return None
-    result = backtest_pair(s, positions(zscore(s)), cost_per_unit=COST_PER_UNIT)
-    return _metrics(result, close[a])
+
+    s = spread_with_beta(pair[a], pair[b], beta)
+    result = backtest_pair(s, positions(zscore(s, window=ZSCORE_WINDOW)),
+                           cost_per_unit=COST_PER_UNIT)
+    return _metrics(result, pair[a], pair[b], beta)
 
 
 def run_split(close: pd.DataFrame, a: str, b: str):
-    formation = close[close.index < SPLIT_DATE]
-    trading = close[close.index >= SPLIT_DATE]
+    """One honest out-of-sample test: fit before SPLIT_DATE, trade after it."""
+    formation = close[close.index < SPLIT_DATE][[a, b]].dropna()
+    trading = close[close.index >= SPLIT_DATE][[a, b]].dropna()
 
-    form_spread = spread(formation[a], formation[b])
-    if len(form_spread) < 100 or adf_pvalue(form_spread) >= COINT_THRESHOLD:
+    beta, _ = _fit(formation, a, b)
+    if beta is None:
         return None
 
-    beta = hedge_ratio(formation[a].dropna(), formation[b].dropna())
     trade_spread = spread_with_beta(trading[a], trading[b], beta)
-    if len(trade_spread) < 65:
+    if len(trade_spread) < MIN_TRADING_DAYS:
         return None
-    result = backtest_pair(trade_spread, positions(zscore(trade_spread)), cost_per_unit=COST_PER_UNIT)
-    return _metrics(result, trading[a])
+
+    result = backtest_pair(trade_spread,
+                           positions(zscore(trade_spread, window=ZSCORE_WINDOW)),
+                           cost_per_unit=COST_PER_UNIT)
+    return _metrics(result, trading[a], trading[b], beta)
 
 
 def run_rolling(close: pd.DataFrame, a: str, b: str,
@@ -79,7 +134,10 @@ def run_rolling(close: pd.DataFrame, a: str, b: str,
     `step_months`, repeat. Window shape is a parameter so the same logic covers
     e.g. 24/3 and 12/3 without a duplicated 'three_month_rolling' method.
 
-    @param formation_months  trailing months used to test cointegration + fit beta
+    A pair that fails the gate in one window is simply not traded that window,
+    and can re-qualify later -- which is what a live desk would do.
+
+    @param formation_months  trailing months used to gate the pair + fit beta
     @param step_months       months traded forward per fitted beta before re-fitting
     """
     pair = close[[a, b]].dropna()
@@ -89,6 +147,7 @@ def run_rolling(close: pd.DataFrame, a: str, b: str,
     split = start + pd.DateOffset(months=formation_months)
 
     window_results = []
+    window_betas = []          # one beta per window that actually traded
     while split < end:
         trade_end = split + pd.DateOffset(months=step_months)
         # formation is the TRAILING window only, not all history before `split`,
@@ -96,14 +155,16 @@ def run_rolling(close: pd.DataFrame, a: str, b: str,
         form_start = split - pd.DateOffset(months=formation_months)
         formation = pair[(pair.index >= form_start) & (pair.index < split)]
         trading = pair[(pair.index >= split) & (pair.index < trade_end)]
+        window_start = split
         split = trade_end
 
-        if len(formation) < 100 or len(trading) < 5:
+        if len(trading) < 5:
             continue
-        form_spread = spread(formation[a], formation[b])
-        if len(form_spread) < 100 or adf_pvalue(form_spread) >= COINT_THRESHOLD:
-            continue
-        beta = hedge_ratio(formation[a].dropna(), formation[b].dropna())
+
+        beta, form_spread = _fit(formation, a, b)
+        if beta is None:
+            continue          # pair failed the gate this window -- sit it out
+        window_betas.append(beta)
 
         # Build the spread over formation+trading together (same frozen beta) so
         # the rolling z-score window arrives at day 1 of trading already calibrated
@@ -114,19 +175,34 @@ def run_rolling(close: pd.DataFrame, a: str, b: str,
         # every window boundary.
         combined = pair[(pair.index >= form_start) & (pair.index < trade_end)]
         combined_spread = spread_with_beta(combined[a], combined[b], beta)
-        z_combined = zscore(combined_spread, window=min(ZSCORE_WINDOW, len(form_spread) - 1))
+        z_combined = zscore(combined_spread,
+                            window=min(ZSCORE_WINDOW, len(form_spread) - 1))
 
-        trade_spread = combined_spread[combined_spread.index >= split]
-        z = z_combined[z_combined.index >= split]
-        window_results.append(backtest_pair(trade_spread, positions(z), cost_per_unit=COST_PER_UNIT))
+        trade_spread = combined_spread[combined_spread.index >= window_start]
+        z = z_combined[z_combined.index >= window_start]
+        window_results.append(backtest_pair(trade_spread, positions(z),
+                                            cost_per_unit=COST_PER_UNIT))
 
     if not window_results:
         return None
     stitched = pd.concat(window_results)
     stitched["equity"] = stitched["net_pnl"].cumsum()
-    return _metrics(stitched, pair[a])
 
-# Run file to test, returns results with run_full, run_split and run rolling
+    # Margin uses the MEAN of the betas that actually traded.
+    #
+    # This used to read `beta` -- the loop variable. That was a latent bug that the
+    # gate exposed: _fit() returns (None, None) for a window that fails the gate,
+    # which rebinds `beta` to None. If the FINAL window was rejected, `beta` was
+    # None when the loop exited, and _metrics blew up on abs(None). Before the gate
+    # existed, beta was never rebound to None, so it never surfaced.
+    #
+    # Averaging is also more honest than taking the last one: beta is re-fitted every
+    # window, so no single value describes the capital tied up across the whole run.
+    avg_beta = float(np.mean(window_betas))
+    return _metrics(stitched, pair[a], pair[b], avg_beta)
+
+
+# Run file to test, returns results with run_full, run_split and run_rolling
 if __name__ == "__main__":
     # inspect one pair under all three methods, plot the equity curves
     from data_layer import load_panel
