@@ -10,10 +10,14 @@
 #       then trade the later period once with that fixed beta. First honest test:
 #       the trading period never influenced pair selection or beta.
 #
-#   run_rolling(close, a, b)
-#       Re-fit beta and re-check cointegration every STEP_MONTHS using only past
-#       data, trading the next STEP_MONTHS forward each time and stitching the P&L.
-#       Most realistic: beta stays current and dead pairs get skipped.
+#   run_rolling(close, a, b, formation_months=..., step_months=...)
+#       Re-fit beta and re-check cointegration every step_months using only the
+#       trailing formation_months of data, trading the next step_months forward
+#       each time and stitching the P&L. Most realistic: beta stays current and
+#       dead pairs get skipped. The window shape is a parameter, not a new mode --
+#       a 12-month formation traded 3 months forward is just
+#       run_rolling(..., formation_months=12, step_months=3). Defaults come from
+#       config.FORMATION_MONTHS / config.STEP_MONTHS.
 #
 # Each returns (sharpe, net_pnl, equity_series) or None if the pair is not
 # tradeable (not enough data, or not cointegrated in the fitting period).
@@ -27,12 +31,13 @@ from candidate_pairs.cointegration import hedge_ratio, spread, spread_with_beta,
 from backtest.zscore_signal import zscore, positions
 from backtest.engine import backtest_pair
 from backtest.evaluate import sharpe
-from backtest.config import COST_PER_UNIT   # single source of truth -- see config.py
+# single source of truth -- see config.py. FORMATION_MONTHS/STEP_MONTHS are the
+# DEFAULTS for run_rolling; callers can override them per-call.
+from backtest.config import COST_PER_UNIT, FORMATION_MONTHS, STEP_MONTHS
 
 SPLIT_DATE = "2025-01-01"      # formation/trading boundary for run_split
-FORMATION_MONTHS = 24          # formation length for run_rolling
-STEP_MONTHS = 3                # trade-forward step for run_rolling
 COINT_THRESHOLD = 0.05         # a pair must pass ADF below this to be traded
+ZSCORE_WINDOW = 60             # rolling lookback for the z-score, in trading days
 
 
 def _metrics(result: pd.DataFrame, ref_price: pd.Series):
@@ -67,17 +72,29 @@ def run_split(close: pd.DataFrame, a: str, b: str):
     return _metrics(result, trading[a])
 
 
-def run_rolling(close: pd.DataFrame, a: str, b: str):
+def run_rolling(close: pd.DataFrame, a: str, b: str,
+                formation_months: int = FORMATION_MONTHS,
+                step_months: int = STEP_MONTHS):
+    """Walk forward: re-fit on the trailing `formation_months`, trade the next
+    `step_months`, repeat. Window shape is a parameter so the same logic covers
+    e.g. 24/3 and 12/3 without a duplicated 'three_month_rolling' method.
+
+    @param formation_months  trailing months used to test cointegration + fit beta
+    @param step_months       months traded forward per fitted beta before re-fitting
+    """
     pair = close[[a, b]].dropna()
     if pair.empty:
         return None
     start, end = pair.index.min(), pair.index.max()
-    split = start + pd.DateOffset(months=FORMATION_MONTHS)
+    split = start + pd.DateOffset(months=formation_months)
 
     window_results = []
     while split < end:
-        trade_end = split + pd.DateOffset(months=STEP_MONTHS)
-        formation = pair[pair.index < split]
+        trade_end = split + pd.DateOffset(months=step_months)
+        # formation is the TRAILING window only, not all history before `split`,
+        # so shortening formation_months genuinely shortens the fitting sample.
+        form_start = split - pd.DateOffset(months=formation_months)
+        formation = pair[(pair.index >= form_start) & (pair.index < split)]
         trading = pair[(pair.index >= split) & (pair.index < trade_end)]
         split = trade_end
 
@@ -91,13 +108,13 @@ def run_rolling(close: pd.DataFrame, a: str, b: str):
         # Build the spread over formation+trading together (same frozen beta) so
         # the rolling z-score window arrives at day 1 of trading already calibrated
         # from formation history, instead of re-warming from scratch every
-        # STEP_MONTHS. With STEP_MONTHS=3 (~63 trading days) and a 60-day z-score
+        # step_months. With step_months=3 (~63 trading days) and a 60-day z-score
         # window, computing z-score fresh on trade_spread alone left only ~3
         # tradeable days per quarter -- the rest was NaN warm-up, discarded at
         # every window boundary.
-        combined = pair[pair.index < trade_end]
+        combined = pair[(pair.index >= form_start) & (pair.index < trade_end)]
         combined_spread = spread_with_beta(combined[a], combined[b], beta)
-        z_combined = zscore(combined_spread, window=min(60, len(form_spread) - 1))
+        z_combined = zscore(combined_spread, window=min(ZSCORE_WINDOW, len(form_spread) - 1))
 
         trade_spread = combined_spread[combined_spread.index >= split]
         z = z_combined[z_combined.index >= split]

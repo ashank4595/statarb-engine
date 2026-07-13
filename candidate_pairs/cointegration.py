@@ -35,14 +35,19 @@ def hedge_ratio(price_a: pd.Series, price_b: pd.Series) -> float:
 
     Returns beta such that A ≈ beta * B.
     """
+    # Combine the two pd series inti a dataframe
     combined = pd.concat([price_a, price_b], axis=1).dropna()
 
     if len(combined) < 2:
         return np.nan
 
+    # Make A and B numpy arrays (remove headers)
     a = combined.iloc[:, 0].to_numpy(dtype=float)
     b = combined.iloc[:, 1].to_numpy(dtype=float)
 
+    # Creates a 2X2 covariance matrix
+    #[var(A) cov(A,B)​  # var(x) = summation(x - E(x)^2)
+    # cov(A,B)var(B)​]  # cov(x,y) = summation((x - E(x))(y - E(y)))
     cov = np.cov(a, b)
 
     # eigh is specifically for real symmetric covariance matrices.
