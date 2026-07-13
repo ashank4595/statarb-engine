@@ -91,15 +91,15 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
     folder = "/Users/ashankawasthy/Desktop/quant_trading/derived_data/futures"
-    close = load_panel(folder, tickers=["COALINDIA", "ONGC"])
+    close = load_panel(folder, tickers=["BRITANNIA", "COLPAL"])
 
-    s = spread(close["COALINDIA"], close["ONGC"])
+    s = spread(close["BRITANNIA"], close["COLPAL"])
     z = zscore(s)
     p = positions(z)
 
     fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
 
-    s.plot(ax=axes[0], title="Spread (COALINDIA - beta*ONGC)", color="blue")
+    s.plot(ax=axes[0], title="Spread (A - beta*B)", color="blue")
 
     z.plot(ax=axes[1], title="Z-score", color="orange")
     axes[1].axhline( ENTRY_THRESHOLD, color="red",   linestyle="--", alpha=0.7, label="entry +2")
