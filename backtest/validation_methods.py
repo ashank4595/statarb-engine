@@ -38,7 +38,8 @@ import numpy as np
 import pandas as pd
 
 from candidate_pairs.cointegration import (
-    hedge_ratio, spread_with_beta, adf_pvalue, pair_is_valid, COINT_THRESHOLD,
+    hedge_ratio, spread_with_beta, cointegration_pvalue, pair_is_valid,
+    COINT_THRESHOLD,
 )
 from backtest.zscore_signal import zscore, positions
 from backtest.engine import backtest_pair
@@ -73,7 +74,13 @@ def _fit(formation: pd.DataFrame, a: str, b: str):
     form_spread = spread_with_beta(formation[a], formation[b], beta)
     if len(form_spread) < MIN_FORMATION_DAYS:
         return None, None
-    if adf_pvalue(form_spread) >= COINT_THRESHOLD:
+
+    # Engle-Granger with Phillips-Ouliaris critical values, NOT adfuller() on the
+    # fitted residual. beta was estimated by minimizing this very spread's variance,
+    # so adfuller() -- which assumes no such search happened -- reports p-values
+    # roughly 2x too small. On the first 12 months that difference was 29 pairs
+    # passing versus 9, against ~8 expected from chance alone.
+    if cointegration_pvalue(formation[a], formation[b], beta) >= COINT_THRESHOLD:
         return None, None
 
     return beta, form_spread
