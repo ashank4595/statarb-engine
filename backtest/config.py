@@ -8,6 +8,14 @@
 # "rolling" - re-fits every STEP_MONTHS on trailing data; closest to how this runs live.
 MODE = "rolling"
 
+# Bar size for the price panel -- passed straight to load_panel(freq=...).
+# "1D" = the original daily study. "15min"/"30min"/"1h" resample the raw 1-min
+# bars (empty overnight buckets are dropped, not forward-filled). Switching this
+# alone changes what gets LOADED, but the annualization factor (still 252 in
+# evaluate.py / report.py) and the months-based rolling step assume 1 bar = 1 day,
+# so they need updating before intraday numbers mean anything.
+FREQ = "15min"
+
 # Rolling-window shape, used ONLY by run_rolling. These two constants fully define
 # the rolling variant -- there is no separate "three_month_rolling" mode, it is just
 # FORMATION_MONTHS = 12 with STEP_MONTHS = 3.

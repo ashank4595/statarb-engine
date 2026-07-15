@@ -7,6 +7,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from candidate_pairs.create_pairs import all_pairs
 from candidate_pairs.cointegration import screen_all
 from data_layer import load_panel
+from backtest.config import FREQ
 
 DATA_DIR = "/Users/ashankawasthy/Desktop/quant_trading/derived_data/futures"
 
@@ -16,7 +17,7 @@ tickers = list({t for _, a, b in pairs for t in [a, b]})
 print(f"Loading {len(tickers)} tickers...")
 
 # load daily close panel
-close = load_panel(DATA_DIR, tickers=tickers)
+close = load_panel(DATA_DIR, tickers=tickers, freq=FREQ)
 print(f"Loaded {close.shape[1]} stocks x {close.shape[0]} days\n")
 
 # run the cointegration screen

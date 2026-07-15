@@ -32,22 +32,6 @@ def _clean_ticker(filename: str) -> str: # _ marks private helper
     return base 
 
 
-def load_daily_close(path: str) -> pd.Series:
-    """
-    Reads a csv file (near-month futures CSV of 1-min bars) and  
-    returns a panda series with Day and Daily close = the last traded price of the day.
-    Ex. AMBER-I.csv -> 
-    2025-06-27    6900.0
-    2025-06-30    6812.0
-    """
-    df = pd.read_csv(path, usecols=["Date", "Time", "Close", "Volume"])
-    # dates are dd/mm/yyyy
-    df["date"] = pd.to_datetime(df["Date"], format="%d/%m/%Y")
-    # last close of each day = end-of-day price
-    daily = df.groupby("date")["Close"].last()
-    return daily
-
-
 def load_bars(path: str, freq: str = "1D") -> pd.Series:
     """Compress the 1-min bars to ANY frequency, not just daily.
 

@@ -91,9 +91,9 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
     folder = "/Users/ashankawasthy/Desktop/quant_trading/derived_data/futures"
-    close = load_panel(folder, tickers=["BRITANNIA", "COLPAL"])
+    close = load_panel(folder, tickers=["NIFTY", "BANKNIFTY"])
 
-    s = spread(close["BRITANNIA"], close["COLPAL"])
+    s = spread(close["NIFTY"], close["BANKNIFTY"])
     z = zscore(s)
     p = positions(z)
 

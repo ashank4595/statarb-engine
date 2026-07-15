@@ -16,7 +16,7 @@ import pandas as pd
 from data_layer import load_panel
 from candidate_pairs.create_pairs import all_pairs
 from backtest.validation_methods import run_full, run_split, run_rolling
-from backtest.config import MODE   # single source of truth -- see config.py
+from backtest.config import MODE, FREQ   # single source of truth -- see config.py
 
 FOLDER = "/Users/ashankawasthy/Desktop/quant_trading/derived_data/futures"
 
@@ -28,7 +28,7 @@ if __name__ == "__main__":
     pairs = all_pairs()
     tickers = sorted({t for _, a, b in pairs for t in [a, b]})
     print(f"loading {len(tickers)} tickers, mode = {MODE}...")
-    close = load_panel(FOLDER, tickers=tickers)
+    close = load_panel(FOLDER, tickers=tickers, freq=FREQ)
 
     print(f"testing {len(pairs)} candidate pairs...\n")
     rows = []

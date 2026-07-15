@@ -175,8 +175,13 @@ def sector_pairs(sectors):
     return pairs
 # pairs = [("banks_large","HDFCBANK","ICICIBANK"), ("banks_large","HDFCBANK","AXISBANK"), ...]
 
+# Set to a single (label, A, B) tuple to test just one pair; None uses the full universe.
+ONLY_PAIR = ("index_arb", "NIFTY", "BANKNIFTY")
+
 # Combine manual pairs + sector pairs into the full list
 def all_pairs():
+    if ONLY_PAIR is not None:
+        return [ONLY_PAIR]
     return MANUAL_PAIRS + sector_pairs(SECTORS)
 
 if __name__ == "__main__":
